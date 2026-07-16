@@ -67,9 +67,29 @@ def index():
 
 @app.route("/healthz")
 def healthz():
-    # Quiet-ish endpoint, useful for readiness/liveness probes
-    # so you can see probe traffic in the logs separately from real requests.
+    # Generic/manual check - not wired to a specific probe.
     return jsonify(status="ok"), 200
+
+
+@app.route("/healthz/live")
+def liveness():
+    # Liveness: only fail if the process itself is stuck/deadlocked.
+    # Keep this cheap and dependency-free -- OpenShift will restart the
+    # pod if this fails, which doesn't help if the problem is a slow
+    # downstream dependency rather than the process itself.
+    return jsonify(status="alive"), 200
+
+
+@app.route("/healthz/ready")
+def readiness():
+    # Readiness: fail if the app isn't ready to serve traffic yet
+    # (e.g. still warming up, or a dependency is unreachable).
+    # This is a stub -- wire in real checks (DB ping, cache, etc.) as needed.
+    ready = True
+    if not ready:
+        logger.warning("readiness check failed")
+        return jsonify(status="not ready"), 503
+    return jsonify(status="ready"), 200
 
 
 @app.route("/log/<level>")
