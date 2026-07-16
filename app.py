@@ -5,7 +5,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, render_template_string, request
 
 # --- Logging setup -----------------------------------------------------
 # Force logs to stdout, unbuffered, with a structured-ish format.
@@ -55,14 +55,57 @@ def log_response(response):
     return response
 
 
+INDEX_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>logtest</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 3rem; }
+    #time { font-size: 1.5rem; font-weight: bold; }
+    button { font-size: 1rem; padding: 0.5rem 1rem; margin-top: 1rem; cursor: pointer; }
+    .meta { color: #666; margin-top: 2rem; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>logtest</h1>
+  <p>Current server time:</p>
+  <div id="time">{{ now }}</div>
+  <button onclick="refreshTime()">Refresh</button>
+
+  <div class="meta">
+    pod: {{ pod }}<br>
+    started: {{ started }}
+  </div>
+
+  <script>
+    async function refreshTime() {
+      const resp = await fetch("/api/time");
+      const data = await resp.json();
+      document.getElementById("time").textContent = data.now;
+    }
+  </script>
+</body>
+</html>
+"""
+
+
 @app.route("/")
 def index():
-    return jsonify(
-        message="Hello from logtest",
+    return render_template_string(
+        INDEX_HTML,
+        now=datetime.now(timezone.utc).isoformat(),
         pod=POD_NAME,
         started=START_TIME,
-        now=datetime.now(timezone.utc).isoformat(),
     )
+
+
+@app.route("/api/time")
+def api_time():
+    # Hit by the page's Refresh button via fetch(); kept separate from "/"
+    # so you get a distinct, easily-filterable log line per refresh click.
+    return jsonify(now=datetime.now(timezone.utc).isoformat())
 
 
 @app.route("/healthz")
