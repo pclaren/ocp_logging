@@ -3,7 +3,8 @@ import os
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, render_template_string, request
 
@@ -20,13 +21,15 @@ logger = logging.getLogger("logtest")
 
 app = Flask(__name__)
 
+LOCAL_TZ = ZoneInfo("Europe/Copenhagen")  # auto-handles CET/CEST switchover
+
 # The OpenShift/sclorg Python S2I builder auto-detects app.py and, if it
 # exposes a WSGI callable named `application`, runs it with gunicorn
 # automatically -- no Dockerfile, no custom run script needed.
 application = app
 
 POD_NAME = os.environ.get("HOSTNAME", "unknown-pod")
-START_TIME = datetime.now(timezone.utc).isoformat()
+START_TIME = datetime.now(LOCAL_TZ).isoformat()
 
 
 @app.before_request
@@ -95,7 +98,7 @@ INDEX_HTML = """
 def index():
     return render_template_string(
         INDEX_HTML,
-        now=datetime.now(timezone.utc).isoformat(),
+        now=datetime.now(LOCAL_TZ).isoformat(),
         pod=POD_NAME,
         started=START_TIME,
     )
@@ -105,7 +108,7 @@ def index():
 def api_time():
     # Hit by the page's Refresh button via fetch(); kept separate from "/"
     # so you get a distinct, easily-filterable log line per refresh click.
-    return jsonify(now=datetime.now(timezone.utc).isoformat())
+    return jsonify(now=datetime.now(LOCAL_TZ).isoformat())
 
 
 @app.route("/healthz")
