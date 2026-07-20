@@ -104,6 +104,12 @@ INDEX_HTML = """
   <button onclick="sendSample()">Send SOAP-style sample</button>
   <div id="sample-status"></div>
 
+  <p style="margin-top:2rem;">Or send a genuine Python traceback (the
+  shape <code>detectMultilineException</code> is actually designed to
+  catch):</p>
+  <button onclick="sendTraceback()">Send Python traceback sample</button>
+  <div id="traceback-status"></div>
+
   <div class="meta">
     pod: {{ pod }}<br>
     started: {{ started }}
@@ -190,6 +196,13 @@ def api_log():
     # Clear BEGIN/END markers via the structured logger, so you can find
     # the block easily in Loki/Kibana even if the raw print() output
     # in between gets split across multiple log entries by the runtime.
+    logger.info("BEGIN multiline block id=%s lines=%d", marker, len(lines))
+    print(text, flush=True)
+    logger.info("END multiline block id=%s", marker)
+
+    return jsonify(status="logged", lines=len(lines), id=marker)
+
+
 SAMPLE_LOG_TEMPLATE = """{ts} INFO redacted :425 - Signing xml:
 Outbound Message
 ---------------------------
