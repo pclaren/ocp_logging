@@ -21,7 +21,17 @@ logger = logging.getLogger("logtest")
 
 app = Flask(__name__)
 
-LOCAL_TZ = ZoneInfo("Europe/Copenhagen")  # auto-handles CET/CEST switchover
+LOCAL_TZ = ZoneInfo("Europe/Stockholm")  # auto-handles CET/CEST switchover
+
+
+class LocalTimeFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        dt = datetime.fromtimestamp(record.created, tz=LOCAL_TZ)
+        return dt.strftime(datefmt or "%Y-%m-%d %H:%M:%S %z")
+
+
+for handler in logging.getLogger().handlers:
+    handler.setFormatter(LocalTimeFormatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
 
 # The OpenShift/sclorg Python S2I builder auto-detects app.py and, if it
 # exposes a WSGI callable named `application`, runs it with gunicorn
@@ -65,9 +75,12 @@ INDEX_HTML = """
   <meta charset="utf-8">
   <title>logtest</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 3rem; }
+    body { font-family: system-ui, sans-serif; margin: 3rem; max-width: 40rem; }
     #time { font-size: 1.5rem; font-weight: bold; }
     button { font-size: 1rem; padding: 0.5rem 1rem; margin-top: 1rem; cursor: pointer; }
+    textarea { width: 100%; font-family: monospace; font-size: 0.95rem; margin-top: 1rem; }
+    #log-status { margin-top: 0.5rem; color: #666; font-size: 0.9rem; }
+    hr { margin: 2rem 0; }
     .meta { color: #666; margin-top: 2rem; font-size: 0.85rem; }
   </style>
 </head>
@@ -76,6 +89,14 @@ INDEX_HTML = """
   <p>Current server time:</p>
   <div id="time">{{ now }}</div>
   <button onclick="refreshTime()">Refresh</button>
+
+  <hr>
+
+  <p>Send arbitrary text (including multi-line) to the container's stdout:</p>
+  <textarea id="logtext" rows="6" placeholder="Paste or type anything here, including multiple lines..."></textarea>
+  <br>
+  <button onclick="sendLog()">Send to stdout</button>
+  <div id="log-status"></div>
 
   <div class="meta">
     pod: {{ pod }}<br>
@@ -87,6 +108,26 @@ INDEX_HTML = """
       const resp = await fetch("/api/time");
       const data = await resp.json();
       document.getElementById("time").textContent = data.now;
+    }
+
+    async function sendLog() {
+      const text = document.getElementById("logtext").value;
+      const status = document.getElementById("log-status");
+      if (!text) {
+        status.textContent = "Nothing to send.";
+        return;
+      }
+      const resp = await fetch("/api/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        status.textContent = `Sent ${data.lines} line(s) to stdout.`;
+      } else {
+        status.textContent = `Error: ${data.error}`;
+      }
     }
   </script>
 </body>
@@ -109,6 +150,34 @@ def api_time():
     # Hit by the page's Refresh button via fetch(); kept separate from "/"
     # so you get a distinct, easily-filterable log line per refresh click.
     return jsonify(now=datetime.now(LOCAL_TZ).isoformat())
+
+
+@app.route("/api/log", methods=["POST"])
+def api_log():
+    """
+    Accepts arbitrary (possibly multi-line) text and writes it to stdout
+    as a single print() call -- i.e. one process write() containing
+    embedded newlines. This is useful for testing whether your log
+    pipeline (CRI-O -> Vector/Fluentd -> Loki/Elasticsearch) correctly
+    reassembles multi-line output into one log record, vs. splitting it
+    into several separate entries.
+    """
+    data = request.get_json(silent=True) or {}
+    text = data.get("text", "")
+    if not text:
+        return jsonify(error="empty text"), 400
+
+    lines = text.splitlines()
+    marker = uuid.uuid4().hex[:8]
+
+    # Clear BEGIN/END markers via the structured logger, so you can find
+    # the block easily in Loki/Kibana even if the raw print() output
+    # in between gets split across multiple log entries by the runtime.
+    logger.info("BEGIN multiline block id=%s lines=%d", marker, len(lines))
+    print(text, flush=True)
+    logger.info("END multiline block id=%s", marker)
+
+    return jsonify(status="logged", lines=len(lines), id=marker)
 
 
 @app.route("/healthz")
