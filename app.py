@@ -98,6 +98,12 @@ INDEX_HTML = """
   <button onclick="sendLog()">Send to stdout</button>
   <div id="log-status"></div>
 
+  <p style="margin-top:2rem;">Or send a fixed sample mimicking a real-world
+  timestamp-prefixed multi-line block (e.g. for testing
+  <code>detectMultilineException</code>):</p>
+  <button onclick="sendSample()">Send SOAP-style sample</button>
+  <div id="sample-status"></div>
+
   <div class="meta">
     pod: {{ pod }}<br>
     started: {{ started }}
@@ -125,6 +131,17 @@ INDEX_HTML = """
       const data = await resp.json();
       if (resp.ok) {
         status.textContent = `Sent ${data.lines} line(s) to stdout.`;
+      } else {
+        status.textContent = `Error: ${data.error}`;
+      }
+    }
+
+    async function sendSample() {
+      const status = document.getElementById("sample-status");
+      const resp = await fetch("/api/log/sample", { method: "POST" });
+      const data = await resp.json();
+      if (resp.ok) {
+        status.textContent = `Sent ${data.lines}-line sample block to stdout.`;
       } else {
         status.textContent = `Error: ${data.error}`;
       }
@@ -173,11 +190,44 @@ def api_log():
     # Clear BEGIN/END markers via the structured logger, so you can find
     # the block easily in Loki/Kibana even if the raw print() output
     # in between gets split across multiple log entries by the runtime.
-    logger.info("BEGIN multiline block id=%s lines=%d", marker, len(lines))
-    print(text, flush=True)
-    logger.info("END multiline block id=%s", marker)
+SAMPLE_LOG_TEMPLATE = """{ts} INFO redacted :425 - Signing xml:
+Outbound Message
+---------------------------
+ID: 675873
+Address: https://redacted
+Encoding: UTF-8
+Http-Method: POST
+Content-Type: text/xml
+Headers: {{Accept=[*/*], SOAPAction=["urn:CorporateService:getCustomerStatement"]}}
+Payload: redacted
+--------------------------------------
+Inbound Message
+----------------------------
+ID: 675873
+Response-Code: 200
+Encoding: UTF-8
+Content-Type: text/xml;charset=UTF-8
+Headers: {{alt-svc=[h3=":443"; ma=86400], cf-cache-status=[DYNAMIC], connection=[keep-alive], content-type=[text/xml;charset=UTF-8]}}
+Payload: redacted
+--------------------------------------"""
 
-    return jsonify(status="logged", lines=len(lines), id=marker)
+
+@app.route("/api/log/sample", methods=["POST"])
+def api_log_sample():
+    """
+    Emits a fixed sample block shaped like a real-world timestamp-prefixed
+    multi-line log entry (request/response dump), rather than a stack
+    trace. Useful for testing whether detectMultilineException (which is
+    tuned for exception/stack-trace patterns) also catches this shape, or
+    whether it doesn't -- since this is NOT an exception/stack trace.
+    Printed as a single stdout write, same as the free-text endpoint.
+    """
+    ts = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    text = SAMPLE_LOG_TEMPLATE.format(ts=ts)
+    lines = text.splitlines()
+    print(text, flush=True)
+    logger.info("sent SOAP-style sample block, lines=%d", len(lines))
+    return jsonify(status="logged", lines=len(lines))
 
 
 @app.route("/healthz")
